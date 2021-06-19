@@ -1,45 +1,14 @@
 using Random
+using StaticArrays
+using LinearAlgebra
 
-import Base: +, -, *, /, isequal, isless
-import LinearAlgebra: ⋅
+Vec2f = SVector{2, Float32}
 
-struct Vec2{T <: Real}
-    x::T
-    y::T
-    Vec2{T}(_x, _y) where T = new{T}(_x, _y)
-end
-
-struct Vec3{T <: Real}
-    x::T
-    y::T
-    z ::T
-    Vec3{T}(_x, _y, _z) where T = new{T}(_x, _y, _z)
-end
-
-Vec2f = Vec2{Float32}
-
-(+)(v0::Vec2f, v1::Vec2f) = Vec2f(v0.x + v1.x, v0.y + v1.y)
-(-)(v0::Vec2f, v1::Vec2f) = Vec2f(v0.x - v1.x, v0.y - v1.y)
-(*)(n, v1::Vec2f) = Vec2f(n * v1.x, n * v1.y)
-(*)(v0::Vec2f, n) = Vec2f(v0.x * n, v0.y * n)
-(/)(v0::Vec2f, n) = Vec2f(v0.x / n, v0.y / n)
-
-dot(v0::Vec2f, v1::Vec2f) = v0.x * v1.x + v0.y * v1.y
-@inline (⋅)(v0::Vec2f, v1::Vec2f) = dot(v0, v1)
 len(v::Vec2f) = √(v ⋅ v)
-normal(v::Vec2f) = Vec2f(-v.y, v.x)
+normal(v::Vec2f) = Vec2f(-v[2], v[1])
 
-Vec3i = Vec3{Int32}
-Vec3f = Vec3{Float32}
-
-(+)(v0::Vec3f, v1::Vec3f) = Vec3f(v0.x + v1.x, v0.y + v1.y, v0.z + v1.z)
-(-)(v0::Vec3f, v1::Vec3f) = Vec3f(v0.x - v1.x, v0.y - v1.y, v0.z - v1.z)
-(-)(v::Vec3f) = Vec3f(-v.x, -v.y, -v.z)
-(*)(n, v::Vec3f) = Vec3f(n * v.x, n * v.y, n * v.z)
-(*)(v::Vec3f, n) = Vec3f(v.x * n, v.y * n, v.z * n)
-(/)(v::Vec3f, n) = Vec3f(v.x / n, v.y / n, v.z / n)
-dot(v0::Vec3f, v1::Vec3f) = v0.x * v1.x + v0.y * v1.y + v0.z * v1.z
-@inline (⋅)(v0::Vec3f, v1::Vec3f) = dot(v0, v1)
+Vec3f = SVector{3, Float32}
+Vec3i = SVector{3, Int32}
 
 # Some utilities
 function clamp(v, l, u)
@@ -97,11 +66,11 @@ struct Intersection
 end
 
 function raytrace(mesh, screen_pos)
-    for i = 1:length(mesh.indices)
+    for i in 1:length(mesh.indices)
         index = mesh.indices[i]
-        v0 = mesh.vertices[index.x]
-        v1 = mesh.vertices[index.y]
-        v2 = mesh.vertices[index.z]
+        v0 = mesh.vertices[index[1]]
+        v1 = mesh.vertices[index[2]]
+        v2 = mesh.vertices[index[3]]
         n01 = normal(v1 - v0)
         n12 = normal(v2 - v1)
         n20 = normal(v0 - v2)
@@ -118,10 +87,10 @@ end
 function render!(img, w, h, mesh, samples, rng)
     sqrt_num_samples = Int32(√samples)
     spp = sqrt_num_samples * sqrt_num_samples
-    for y = 1:h
-        for x = 1:w
-            for dy = 1:sqrt_num_samples
-                for dx = 1:sqrt_num_samples
+    for y in 1:h
+        for x in 1:w
+            for dy in 1:sqrt_num_samples
+                for dx in 1:sqrt_num_samples
                     xoff = (dx + rand(rng)) / sqrt_num_samples
                     yoff = (dy + rand(rng)) / sqrt_num_samples
                     screen_pos = Vec2f(x + xoff, y + yoff)
@@ -138,14 +107,16 @@ function save(img, w, h, name; flip = false)
         println(io, "P3\n$(w) $(h) 255")
         for i = 1:length(img)
             color = flip ? -img[i] : img[i]
-            println(io , tonemap(color.x), " ", tonemap(color.y), " ", tonemap(color.z))
+            println(io , tonemap(color[1]), " ", tonemap(color[2]), " ", tonemap(color[3]))
         end
     end
 end
 
 function build_edge_sampler(mesh, edges)
     pmf = Vector{Float32}()
+    sizehint!(pmf, length(edges))
     cdf = Vector{Float32}()
+    sizehint!(cdf, length(edges) + 1)
     push!(cdf, 0)
     for edge in edges
         v0 = mesh.vertices[edge.v0]
@@ -154,8 +125,12 @@ function build_edge_sampler(mesh, edges)
         push!(cdf, pmf[end] + cdf[end])
     end
     length_sum = cdf[end]
-    pmf ./= length_sum
-    cdf ./= length_sum
+    for p in pmf
+        p /= length_sum
+    end
+    for c in cdf
+        c /= length_sum
+    end
     return Sampler(pmf, cdf)
 end
 
@@ -167,12 +142,12 @@ end
 function collect_edges(mesh)
     edges = Set{Edge}()
     for index in mesh.indices
-        push!(edges, Edge(index.x, index.y))
-        push!(edges, Edge(index.y, index.z))
-        push!(edges, Edge(index.z, index.x))
+        push!(edges, Edge(index[1], index[2]))
+        push!(edges, Edge(index[2], index[3]))
+        push!(edges, Edge(index[3], index[1]))
     end
 
-    return sort!(collect(edges))
+    return edges |> collect |> sort!
 end
 
 function compute_interior_derivatives(d_colors, mesh, spp, w, h, adjoint, rng)
@@ -205,8 +180,8 @@ function compute_edge_derivatives(mesh, edges, sampler, adjoint, num_edge_sample
         v1 = mesh.vertices[edge.v1]
         t = rand(rng)
         p = v0 + t * (v1 - v0)
-        xi = Int32(round(p.x))
-        yi = Int32(round(p.y))
+        xi = Int32(floor(p[1]))
+        yi = Int32(floor(p[2]))
         if xi < 0 || yi < 0 || xi > w || yi > h
             continue
         end
@@ -218,11 +193,11 @@ function compute_edge_derivatives(mesh, edges, sampler, adjoint, num_edge_sample
         weight = 1f0 / (pdf * num_edge_samples)
         adj = (color_in - color_out) ⋅ (adjoint[(yi - 1) * w + xi])
 
-        d_v0 = Vec2f((1 - t) * n.x, (1 - t) * n.y) * adj * weight
-        d_v1 = Vec2f(t * n.x, t * n.y) * adj * weight
+        d_v0 = Vec2f((1 - t) * n[1], (1 - t) * n[2]) * adj * weight
+        d_v1 = Vec2f(t * n[1], t * n[2]) * adj * weight
 
-        dx = -n.x * (color_in - color_out) * weight
-        dy = -n.y * (color_in - color_out) * weight
+        dx = -n[1] * (color_in - color_out) * weight
+        dy = -n[2] * (color_in - color_out) * weight
         
         screen_dx[(yi - 1) * w + xi] += dx
         screen_dy[(yi - 1) * w + xi] += dy
@@ -241,28 +216,22 @@ end
 
 function main()
     w, h = 256, 256
-    mesh = TriangleMesh(
-        # vertices
-        [Vec2f(50., 25.), Vec2f(200., 200.), Vec2f(15., 150.), 
-        Vec2f(200., 15.), Vec2f(150., 250.), Vec2f(50., 100.)],
-        #indices
-        [Vec3i(1, 2, 3),
-        Vec3i(4, 5, 6)],
-        # colors
-        [Vec3f(0.3, 0.5, 0.3),
-        Vec3f(0.3, 0.3, 0.5)])
+    vertices = [Vec2f(50., 25.), Vec2f(200., 200.), Vec2f(15., 150.), 
+        Vec2f(200., 15.), Vec2f(150., 250.), Vec2f(50., 100.)]
+    indices = [Vec3i(1, 2, 3),
+        Vec3i(4, 5, 6)]
+    colors = [Vec3f(0.3, 0.5, 0.3),
+        Vec3f(0.3, 0.3, 0.5)]
+    mesh = TriangleMesh(vertices, indices, colors)
+
     rng = MersenneTwister(1234)
-    img = Vector{Vec3f}(undef, w * h)
-    fill!(img, Vec3f(0., 0., 0.))
+    img = zeros(Vec3f, w * h)
     render!(img, w, h, mesh, 4, rng)
     save(img, w, h, "render.ppm")
 
-    adjoint = Vector{Vec3f}(undef, w * h)
-    fill!(adjoint, Vec3f(1., 1., 1.))
-    dx = Vector{Vec3f}(undef, w * h)
-    fill!(dx, Vec3f(0., 0., 0.))
-    dy = Vector{Vec3f}(undef, w * h)
-    fill!(dy, Vec3f(0., 0., 0.))
+    adjoint = fill(Vec3f(1, 1, 1), w * h)
+    dx = zeros(Vec3f, w * h)
+    dy = zeros(Vec3f, w * h)
     d_mesh = DTriangleMesh(length(mesh.vertices), length(mesh.colors))
     d_render!(dx, dy, adjoint, 4, w, h, mesh, rng, d_mesh)
     save(dx, w, h, "dx_pos.ppm")
@@ -270,3 +239,5 @@ function main()
     save(dy, w, h, "dy_pos.ppm")
     save(dy, w, h, "dy_neg.ppm", flip = true)
 end
+
+main()
