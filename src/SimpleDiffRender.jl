@@ -2,6 +2,8 @@ using Random
 using StaticArrays
 using LinearAlgebra
 
+import Base: isless, isequal
+
 Vec2f = SVector{2, Float32}
 
 len(v::Vec2f) = √(v ⋅ v)
@@ -147,7 +149,7 @@ function collect_edges(mesh)
         push!(edges, Edge(index[3], index[1]))
     end
 
-    return edges |> collect |> sort!
+    return sort!(collect(edges))
 end
 
 function compute_interior_derivatives(d_colors, mesh, spp, w, h, adjoint, rng)
