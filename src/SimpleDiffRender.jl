@@ -36,10 +36,8 @@ struct DTriangleMesh
     colors::Vector{Vec3f}
 
     function DTriangleMesh(num_verts, num_colors)
-        vertices = Vector{Vec2f}(undef, num_verts)
-        fill!(vertices, Vec2f(0, 0))
-        colors = Vector{Vec3f}(undef, num_colors)
-        fill!(colors, Vec3f(0, 0, 0))
+        vertices = zeros(Vec2f, num_verts)
+        colors = zeros(Vec3f, num_colors)
         return new(vertices, colors)
     end
 end
@@ -93,8 +91,8 @@ function render!(img, w, h, mesh, samples, rng)
         for x in 1:w
             for dy in 1:sqrt_num_samples
                 for dx in 1:sqrt_num_samples
-                    xoff = (dx + rand(rng)) / sqrt_num_samples
-                    yoff = (dy + rand(rng)) / sqrt_num_samples
+                    xoff = ((dx - 1) + rand(rng)) / sqrt_num_samples
+                    yoff = ((dy - 1) + rand(rng)) / sqrt_num_samples
                     screen_pos = Vec2f(x + xoff, y + yoff)
                     intersection = raytrace(mesh, screen_pos)
                     img[(y - 1) * w + x] += intersection.shade / spp
@@ -107,7 +105,7 @@ end
 function save(img, w, h, name; flip = false)
     open(name, "w") do io
         println(io, "P3\n$(w) $(h) 255")
-        for i = 1:length(img)
+        for i in 1:length(img)
             color = flip ? -img[i] : img[i]
             println(io , tonemap(color[1]), " ", tonemap(color[2]), " ", tonemap(color[3]))
         end
@@ -116,10 +114,8 @@ end
 
 function build_edge_sampler(mesh, edges)
     pmf = Vector{Float32}()
-    sizehint!(pmf, length(edges))
     cdf = Vector{Float32}()
-    sizehint!(cdf, length(edges) + 1)
-    push!(cdf, 0)
+    push!(cdf, 0f0)
     for edge in edges
         v0 = mesh.vertices[edge.v0]
         v1 = mesh.vertices[edge.v1]
@@ -127,18 +123,15 @@ function build_edge_sampler(mesh, edges)
         push!(cdf, pmf[end] + cdf[end])
     end
     length_sum = cdf[end]
-    for p in pmf
-        p /= length_sum
-    end
-    for c in cdf
-        c /= length_sum
-    end
+    pmf ./= length_sum
+    cdf ./= length_sum
+    
     return Sampler(pmf, cdf)
 end
 
 function sample(sampler, u)
     first_gt = searchsortedfirst(sampler.cdf, u)
-    return Int32(clamp(first_gt, 1, length(sampler.cdf) - 1))
+    return clamp(first_gt, 1, length(sampler.cdf) - 1)
 end
 
 function collect_edges(mesh)
@@ -152,15 +145,15 @@ function collect_edges(mesh)
     return sort!(collect(edges))
 end
 
-function compute_interior_derivatives(d_colors, mesh, spp, w, h, adjoint, rng)
-    sqrt_num_samples = Int32(sqrt(spp))
+function compute_interior_derivatives(d_colors, mesh, interior_spp, w, h, adjoint, rng)
+    sqrt_num_samples = Int32(sqrt(interior_spp))
     spp = sqrt_num_samples * sqrt_num_samples
-    for y = 1:h
-        for x = 1:w
-            for dy = 1:sqrt_num_samples
-                for dx = 1:sqrt_num_samples
-                    xoff = (dx + rand(rng)) / sqrt_num_samples
-                    yoff = (dy + rand(rng)) / sqrt_num_samples
+    for y in 1:h
+        for x in 1:w
+            for dy in 1:sqrt_num_samples
+                for dx in 1:sqrt_num_samples
+                    xoff = ((dx - 1) + rand(rng)) / sqrt_num_samples
+                    yoff = ((dy - 1) + rand(rng)) / sqrt_num_samples
                     screen_pos = Vec2f(x + xoff, y + yoff)
                     hit = raytrace(mesh, screen_pos)
                     if hit.index != -1
@@ -174,10 +167,12 @@ end
 
 function compute_edge_derivatives(mesh, edges, sampler, adjoint, num_edge_samples, w, h, rng, screen_dx, screen_dy, d_vertices)
     ϵ = 1f-3
-    for i = 1:num_edge_samples
+    for _ in 1:num_edge_samples
+        # pick an edge
         edge_id = sample(sampler, rand(rng))
         edge = edges[edge_id]
         pmf = sampler.pmf[edge_id]
+        # pick a point p on the edge
         v0 = mesh.vertices[edge.v0]
         v1 = mesh.vertices[edge.v1]
         t = rand(rng)
@@ -187,20 +182,21 @@ function compute_edge_derivatives(mesh, edges, sampler, adjoint, num_edge_sample
         if xi < 0 || yi < 0 || xi > w || yi > h
             continue
         end
+        # Compute the colors at the two sides of the selected edge
         n = normal((v1 - v0) / len(v1 - v0))
         color_in = raytrace(mesh, p - n * ϵ).shade
         color_out = raytrace(mesh, p + n * ϵ).shade
-        
+        # compute the weights using the PDF and adjoint image
         pdf = pmf / len(v1 - v0)
         weight = 1f0 / (pdf * num_edge_samples)
         adj = (color_in - color_out) ⋅ (adjoint[(yi - 1) * w + xi])
-
+        # comopute the derivatives using Reynolds transport theorem
         d_v0 = Vec2f((1 - t) * n[1], (1 - t) * n[2]) * adj * weight
         d_v1 = Vec2f(t * n[1], t * n[2]) * adj * weight
-
+        # screen coordinate derivatives ignoroe the adjoint
         dx = -n[1] * (color_in - color_out) * weight
         dy = -n[2] * (color_in - color_out) * weight
-        
+        # scatter gradients to buffers
         screen_dx[(yi - 1) * w + xi] += dx
         screen_dy[(yi - 1) * w + xi] += dy
         d_vertices[edge.v0] += d_v0
@@ -218,8 +214,8 @@ end
 
 function main()
     w, h = 256, 256
-    vertices = [Vec2f(50., 25.), Vec2f(200., 200.), Vec2f(15., 150.), 
-        Vec2f(200., 15.), Vec2f(150., 250.), Vec2f(50., 100.)]
+    vertices = [Vec2f(51., 26.), Vec2f(201., 201.), Vec2f(16., 151.), 
+        Vec2f(201., 16.), Vec2f(151., 251.), Vec2f(51., 101.)]
     indices = [Vec3i(1, 2, 3),
         Vec3i(4, 5, 6)]
     colors = [Vec3f(0.3, 0.5, 0.3),
