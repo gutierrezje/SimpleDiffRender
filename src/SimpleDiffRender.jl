@@ -91,7 +91,7 @@ function render!(img, w, h, mesh, samples, rng)
                     yoff = ((dy - 1) + rand(rng)) / sqrt_num_samples
                     screen_pos = SVector{2, Float32}(x + xoff, y + yoff)
                     intersection = raytrace(mesh, screen_pos)
-                    sample_color += intersection.shade / Float32(spp)
+                    sample_color += intersection.shade / spp
                 end
             end
             img[(y - 1) * w + x] = sample_color
@@ -128,7 +128,7 @@ end
 
 function sample(sampler, u)
     first_gt = searchsortedfirst(sampler.cdf, u)
-    return clamp(first_gt, 1, length(sampler.cdf) - 1)
+    return clamp(first_gt - 1, 1, length(sampler.cdf) - 1)
 end
 
 function collect_edges(mesh)
@@ -176,7 +176,7 @@ function compute_edge_derivatives(mesh, edges, sampler, adjoint, num_edge_sample
         p = v0 + t * (v1 - v0)
         xi = Int32(floor(p[1]))
         yi = Int32(floor(p[2]))
-        if xi < 0 || yi < 0 || xi > w || yi > h
+        if xi < 1 || yi < 1 || xi > w || yi > h
             continue
         end
         # Compute the colors at the two sides of the selected edge
