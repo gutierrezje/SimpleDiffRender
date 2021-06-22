@@ -4,13 +4,8 @@ using LinearAlgebra
 
 import Base: isless, isequal
 
-Vec2f = SVector{2, Float32}
-
-len(v::Vec2f) = √(v ⋅ v)
-normal(v::Vec2f) = Vec2f(-v[2], v[1])
-
-Vec3f = SVector{3, Float32}
-Vec3i = SVector{3, Int32}
+len(v::SVector{2, Float32}) = √(v ⋅ v)
+normal(v::SVector{2, Float32}) = SVector{2, Float32}(-v[2], v[1])
 
 # Some utilities
 function clamp(v, l, u)
@@ -26,18 +21,18 @@ end
 tonemap(rgb) = Int32(round(clamp(rgb, 0.f0, 1.f0) ^ (1.f0 / 2.2f0) * 255.99f0))
 
 struct TriangleMesh
-    vertices::Vector{Vec2f}
-    indices::Vector{Vec3i}
-    colors::Vector{Vec3f}
+    vertices::Vector{SVector{2, Float32}}
+    indices::Vector{SVector{3, Int32}}
+    colors::Vector{SVector{3, Float32}}
 end
 
 struct DTriangleMesh
-    vertices::Vector{Vec2f}
-    colors::Vector{Vec3f}
+    vertices::Vector{SVector{2, Float32}}
+    colors::Vector{SVector{3, Float32}}
 
     function DTriangleMesh(num_verts, num_colors)
-        vertices = zeros(Vec2f, num_verts)
-        colors = zeros(Vec3f, num_colors)
+        vertices = zeros(SVector{2, Float32}, num_verts)
+        colors = zeros(SVector{3, Float32}, num_colors)
         return new(vertices, colors)
     end
 end
@@ -58,10 +53,10 @@ struct Sampler
 end
 
 struct Intersection
-    shade::Vec3f
+    shade::SVector{3, Float32}
     index::Int32
 
-    Intersection() = new(Vec3f(0, 0, 0), -1)
+    Intersection() = new(SVector{3, Float32}(0, 0, 0), -1)
     Intersection(s, i) = new(s, i)
 end
 
@@ -89,15 +84,17 @@ function render!(img, w, h, mesh, samples, rng)
     spp = sqrt_num_samples * sqrt_num_samples
     for y in 1:h
         for x in 1:w
+            sample_color = SVector{3, Float32}(0, 0, 0)
             for dy in 1:sqrt_num_samples
                 for dx in 1:sqrt_num_samples
                     xoff = ((dx - 1) + rand(rng)) / sqrt_num_samples
                     yoff = ((dy - 1) + rand(rng)) / sqrt_num_samples
-                    screen_pos = Vec2f(x + xoff, y + yoff)
+                    screen_pos = SVector{2, Float32}(x + xoff, y + yoff)
                     intersection = raytrace(mesh, screen_pos)
-                    img[(y - 1) * w + x] += intersection.shade / spp
+                    sample_color += intersection.shade / Float32(spp)
                 end
             end
+            img[(y - 1) * w + x] = sample_color
         end
     end
 end
@@ -154,7 +151,7 @@ function compute_interior_derivatives(d_colors, mesh, interior_spp, w, h, adjoin
                 for dx in 1:sqrt_num_samples
                     xoff = ((dx - 1) + rand(rng)) / sqrt_num_samples
                     yoff = ((dy - 1) + rand(rng)) / sqrt_num_samples
-                    screen_pos = Vec2f(x + xoff, y + yoff)
+                    screen_pos = SVector{2, Float32}(x + xoff, y + yoff)
                     hit = raytrace(mesh, screen_pos)
                     if hit.index != -1
                         d_colors[hit.index] += adjoint[(y - 1) * w + x] / spp
@@ -191,8 +188,8 @@ function compute_edge_derivatives(mesh, edges, sampler, adjoint, num_edge_sample
         weight = 1f0 / (pdf * num_edge_samples)
         adj = (color_in - color_out) ⋅ (adjoint[(yi - 1) * w + xi])
         # comopute the derivatives using Reynolds transport theorem
-        d_v0 = Vec2f((1 - t) * n[1], (1 - t) * n[2]) * adj * weight
-        d_v1 = Vec2f(t * n[1], t * n[2]) * adj * weight
+        d_v0 = SVector{2, Float32}((1 - t) * n[1], (1 - t) * n[2]) * adj * weight
+        d_v1 = SVector{2, Float32}(t * n[1], t * n[2]) * adj * weight
         # screen coordinate derivatives ignoroe the adjoint
         dx = -n[1] * (color_in - color_out) * weight
         dy = -n[2] * (color_in - color_out) * weight
@@ -214,22 +211,22 @@ end
 
 function main()
     w, h = 256, 256
-    vertices = [Vec2f(51., 26.), Vec2f(201., 201.), Vec2f(16., 151.), 
-        Vec2f(201., 16.), Vec2f(151., 251.), Vec2f(51., 101.)]
-    indices = [Vec3i(1, 2, 3),
-        Vec3i(4, 5, 6)]
-    colors = [Vec3f(0.3, 0.5, 0.3),
-        Vec3f(0.3, 0.3, 0.5)]
+    vertices = [SVector{2, Float32}(51., 26.), SVector{2, Float32}(201., 201.), SVector{2, Float32}(16., 151.), 
+        SVector{2, Float32}(201., 16.), SVector{2, Float32}(151., 251.), SVector{2, Float32}(51., 101.)]
+    indices = [SVector{3, Int32}(1, 2, 3),
+        SVector{3, Int32}(4, 5, 6)]
+    colors = [SVector{3, Float32}(0.3, 0.5, 0.3),
+        SVector{3, Float32}(0.3, 0.3, 0.5)]
     mesh = TriangleMesh(vertices, indices, colors)
 
     rng = MersenneTwister(1234)
-    img = zeros(Vec3f, w * h)
+    img = zeros(SVector{3, Float32}, w * h)
     render!(img, w, h, mesh, 4, rng)
     save(img, w, h, "render.ppm")
 
-    adjoint = fill(Vec3f(1, 1, 1), w * h)
-    dx = zeros(Vec3f, w * h)
-    dy = zeros(Vec3f, w * h)
+    adjoint = fill(SVector{3, Float32}(1, 1, 1), w * h)
+    dx = zeros(SVector{3, Float32}, w * h)
+    dy = zeros(SVector{3, Float32}, w * h)
     d_mesh = DTriangleMesh(length(mesh.vertices), length(mesh.colors))
     d_render!(dx, dy, adjoint, 4, w, h, mesh, rng, d_mesh)
     save(dx, w, h, "dx_pos.ppm")
